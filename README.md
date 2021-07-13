@@ -5,7 +5,7 @@ Python implementation of the algorithm in the paper "Contrast Enhancement Based 
 
 ## Usage
 
-**a. Go to the project directory. **
+**a. Go to the project directory.**
 
 ```shell
 cd CE_LDR/
