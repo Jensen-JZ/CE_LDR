@@ -17,6 +17,7 @@ def config_parse():
     return args
 
 def LDR(input_data, alpha, U, fname):
+    print('Wait...')
 
     if (len(sys.argv) - 1) / 2 < 3:
         U = np.zeros((255, 255))
@@ -95,6 +96,8 @@ def LDR(input_data, alpha, U, fname):
                 output[i, j, k] = x[input_data[i, j, k]]
 
     CE_IMG = np.uint8(np.around(output))
+    print('Finished!')
+
     plt.title('Enhancement_Image')
     plt.imshow(CE_IMG)
     plt.imsave('ce_' + fname + '.png', CE_IMG)
@@ -103,7 +106,7 @@ def LDR(input_data, alpha, U, fname):
 def main():
     args = config_parse()
     input_data = np.array(Image.open(args.input_path))
-    fname = re.split('[./]', args.input_path)[-2] + '_' + re.split('[./]', args.input_path)[-1]
+    fname = re.split('[./\\\]', args.input_path)[-2] + '_' + re.split('[./\\\]', args.input_path)[-1]
     plt.title('Original_Image')
     plt.imshow(np.array(Image.open(args.input_path)))
     plt.show()
