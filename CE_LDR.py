@@ -9,59 +9,87 @@ import matplotlib.pyplot as plt
 def config_parse():
     parser = argparse.ArgumentParser(description='Path Parser')
     parser.add_argument('--input_path', type=str, required=True, default='./ori.png', help='Specify the path of input image.')
-    parser.add_argument('--alpha', type=int, help='Specify the value of alpha in equation 23.')
-    parser.add_argument('--U', type=np.ndarray, help='Specify the matrix of U in equation 31.')
+    parser.add_argument('--alpha', type=float, default=2.5, help='Specify the value of alpha in equation 23. Default is 2.5.')
+    parser.add_argument('--U', type=np.load, default=None, help='Specify the path to a .npy file for the matrix U in equation 31. Optional.')
 
     args = parser.parse_args()
+    
+    if args.U is not None:
+        args.U = np.load(args.U)
 
     return args
 
-def LDR(input_data, alpha, U, fname):
+def LDR(input_data, alpha, U_matrix, fname):
     print('Wait...')
 
-    if (len(sys.argv) - 1) / 2 < 3:
+    if U_matrix is None:
         U = np.zeros((255, 255))
         tmp_k = np.arange(255)
         for layer in range(255):
             U[:, layer] = np.minimum(tmp_k, 255 - layer) - np.maximum(tmp_k - layer, 0) + 1
-
-    if (len(sys.argv) - 1) / 2 < 2:
-        alpha = 2.5
+    else:
+        U = U_matrix
 
     [HEIGHT, WIDTH, DEEP] = input_data.shape
-    if (HEIGHT == 256) & ((WIDTH * DEEP) == 256):
-        h2D_in = input_data
+    if (HEIGHT == 256) & ((WIDTH * DEEP) == 256) and DEEP == 1: # Assuming if h2D_in is passed, it's 2D
+        h2D_in = input_data.squeeze() # Ensure it's 2D
     else:
-        in_Y = input_data
+        in_Y = input_data.astype(np.int16) # Ensure integer type for indexing
+        h2D_in = np.zeros((256, 256), dtype=np.int32)
 
-        h2D_in = np.zeros((256, 256))
+        # Reshape in_Y to combine WIDTH and DEEP for easier pair finding, as per original logic
+        # The original code iterates j from 0 to (WIDTH * DEEP) - 1
+        # ref = in_Y[i, j % WIDTH, math.floor(j / WIDTH)]
+        # This is equivalent to iterating a reshaped array:
+        in_Y_flat = in_Y.reshape(HEIGHT, WIDTH * DEEP)
 
-        for i in range(HEIGHT):
-            for j in range(WIDTH * DEEP):
-                ref = in_Y[i, j % WIDTH, math.floor(j / WIDTH)]
+        # Horizontal pairs
+        ref_h = in_Y_flat[:, :-1]
+        trg_h = in_Y_flat[:, 1:]
+        
+        max_h = np.maximum(ref_h, trg_h)
+        min_h = np.minimum(ref_h, trg_h)
+        np.add.at(h2D_in, (max_h.ravel(), min_h.ravel()), 1)
 
-                if i != HEIGHT - 1:
-                    trg = in_Y[i + 1, j % WIDTH, math.floor(j / WIDTH)]
-                    h2D_in[max(ref, trg), min(ref, trg)] = h2D_in[max(ref, trg), min(ref, trg)] + 1
+        # Vertical pairs
+        ref_v = in_Y_flat[:-1, :]
+        trg_v = in_Y_flat[1:, :]
 
-                if j != (WIDTH * DEEP) - 1:
-                    trg = in_Y[i, (j + 1) % WIDTH, math.floor((j + 1) / WIDTH)]
-                    h2D_in[max(ref, trg), min(ref, trg)] = h2D_in[max(ref, trg), min(ref, trg)] + 1
+        max_v = np.maximum(ref_v, trg_v)
+        min_v = np.minimum(ref_v, trg_v)
+        np.add.at(h2D_in, (max_v.ravel(), min_v.ravel()), 1)
 
     D = np.zeros((255, 255))
     s = np.zeros((255, 1))
 
     for layer in range(255):
-        h_l = np.zeros((255 - layer, 1))
+        # The original loop for h_l was:
+        # for i in range(1 + layer, 256): (rows from 1+layer to 255)
+        #     j = i - layer - 1          (columns from 0 to 254-layer)
+        #     h_l[tmp_idx, 0] = math.log(h2D_in[i, j] + 1)
+        # This corresponds to the diagonal k = -(layer + 1)
+        # The elements are h2D_in[idx, idx - (layer+1)]
+        # If h2D_in has shape (M, N), np.diag(v, k) considers elements v[i, i+k]
+        # We want h2D_in[row, col] where col = row - (layer+1), so row - col = layer+1
+        # So, if we consider h2D_in[i, j], then i-j = layer+1.
+        # For np.diag(v, k), k = j - i. So, k = -(layer+1).
+        # The diagonal starts at h2D_in[layer+1, 0]
+        
+        # Extract the specific diagonal from h2D_in
+        # The diagonal has elements h2D_in[layer+1, 0], h2D_in[layer+2, 1], ..., h2D_in[255, 254-layer]
+        # This is equivalent to np.diag(h2D_in[layer+1:, :255-layer], k=0) but simpler:
+        diag_elements = np.diag(h2D_in, k=-(layer + 1))
+        
+        # We need to select the relevant part of this diagonal.
+        # The original loop for i from 1+layer to 255 means it takes 255-(1+layer)+1 = 255-layer elements.
+        # The first element is h2D_in[1+layer, 0].
+        # np.diag(h2D_in, k=-(layer+1)) will give elements h2D_in[layer+1,0], h2D_in[layer+2,1], ...
+        # The length of this diagonal is min(256-(layer+1), 256) = 255-layer
+        h_l_values = diag_elements[:255-layer].copy() # Ensure correct length
 
-        tmp_idx = 0
-        for i in range(1 + layer, 256):
-            j = i - layer - 1
+        h_l = np.log1p(h_l_values).reshape(-1, 1)
 
-            h_l[tmp_idx, 0] = math.log(h2D_in[i, j] + 1)
-            tmp_idx += 1
-
-        s[layer, 0] = sum(h_l)
+        s[layer, 0] = np.sum(h_l)
 
         if s[layer, 0] == 0:
             continue
@@ -88,12 +116,11 @@ def LDR(input_data, alpha, U, fname):
 
     x = 255 * tmp
 
-    output = np.zeros((HEIGHT, WIDTH, DEEP))
+    # Ensure input_data is integer type for indexing
+    # PIL images are usually uint8, but explicit conversion is safer.
+    # x contains the mapping, input_data contains the original pixel values.
+    output = x[input_data.astype(np.uint8)]
 
-    for i in range(HEIGHT):
-        for j in range(WIDTH):
-            for k in range(DEEP):
-                output[i, j, k] = x[input_data[i, j, k]]
 
     CE_IMG = np.uint8(np.around(output))
     print('Finished!')
@@ -110,7 +137,7 @@ def main():
     plt.title('Original_Image')
     plt.imshow(np.array(Image.open(args.input_path)))
     plt.show()
-    LDR(input_data, args.alpha, args.U, fname)
+    LDR(input_data, args.alpha, args.U, fname) # Pass args.U which might be None or the loaded array
 
 if __name__ == "__main__":
     main()
